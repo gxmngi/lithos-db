@@ -217,6 +217,52 @@ impl BTree {
         }
     }
 
+    /// Perform a range scan: retrieves all (key, payload) where low <= key <= high.
+    /// Uses O(log N) to seek to the start leaf, then O(K) sequential traversal across sibling pages.
+    pub fn range_scan(&mut self, low: i64, high: i64) -> io::Result<Vec<(i64, Vec<u8>)>> {
+        let mut results = Vec::new();
+        let mut current_id = self.root_page_id();
+
+        // 1. Traverse down to the first leaf that can contain low
+        loop {
+            let page = self.pager.read_page(current_id)?;
+            match page.page_type().map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))? {
+                PageType::Interior => {
+                    current_id = page.find_interior_child(low);
+                }
+                PageType::Leaf => {
+                    break;
+                }
+                PageType::Free => {
+                    return Err(io::Error::new(io::ErrorKind::InvalidData, "Encountered Free page during range scan"));
+                }
+            }
+        }
+
+        // 2. Scan sequentially across leaf sibling pages
+        'scan: loop {
+            let page = self.pager.read_page(current_id)?;
+            let count = page.cell_count() as usize;
+
+            for i in 0..count {
+                let (key, payload) = page.get_leaf_cell(i);
+                if key >= low && key <= high {
+                    results.push((key, payload));
+                } else if key > high {
+                    break 'scan;
+                }
+            }
+
+            let next_id = page.next_leaf();
+            if next_id == 0 {
+                break;
+            }
+            current_id = next_id;
+        }
+
+        Ok(results)
+    }
+
     /// Flush all pending writes to disk.
     pub fn flush(&mut self) -> io::Result<()> {
         self.pager.flush()
@@ -285,6 +331,38 @@ mod tests {
 
             // Non-existent key
             assert_eq!(btree.search(999).unwrap(), None);
+        }
+
+        let _ = fs::remove_file(test_file);
+    }
+
+    #[test]
+    fn test_btree_range_scan() {
+        let test_file = "test_btree_range.db";
+        let _ = fs::remove_file(test_file);
+
+        {
+            let mut btree = BTree::open(test_file).unwrap();
+
+            // Insert 100 items with keys 1..=100 (forces multiple pages)
+            for i in 1..=100 {
+                let val = format!("val_{}", i);
+                btree.insert(i, val.as_bytes()).unwrap();
+            }
+
+            // Range scan: keys 25 to 40 (must span across leaf page boundaries)
+            let results = btree.range_scan(25, 40).unwrap();
+            assert_eq!(results.len(), 16); // 25..=40 is 16 items
+
+            for (idx, (key, payload)) in results.iter().enumerate() {
+                let expected_key = (25 + idx) as i64;
+                assert_eq!(*key, expected_key);
+                assert_eq!(String::from_utf8_lossy(payload), format!("val_{}", expected_key));
+            }
+
+            // Boundary checks: empty range (no matches)
+            let empty = btree.range_scan(200, 300).unwrap();
+            assert!(empty.is_empty());
         }
 
         let _ = fs::remove_file(test_file);
