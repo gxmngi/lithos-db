@@ -54,8 +54,8 @@ impl BTree {
     }
 
     /// Insert a (key, payload) record into the B+Tree.
-    /// Handles leaf insertion and page splitting.
-    pub fn insert(&mut self, key: i64, payload: &[u8]) -> io::Result<()> {
+    /// Returns Ok(true) if an existing record was updated, or Ok(false) if a new record was inserted.
+    pub fn insert(&mut self, key: i64, payload: &[u8]) -> io::Result<bool> {
         let mut path: Vec<u32> = Vec::new();
         let mut current_id = self.root_page_id();
 
@@ -83,14 +83,15 @@ impl BTree {
 
         // 2. Try inserting into target leaf
         let mut leaf = self.pager.read_page(current_id)?;
-        match leaf.insert_leaf_cell(key, payload) {
-            Ok(_) => {
+        match leaf.insert_or_update_leaf_cell(key, payload) {
+            Ok((_, was_updated)) => {
                 self.pager.write_page(current_id, &leaf)?;
-                Ok(())
+                Ok(was_updated)
             }
             Err(_) => {
                 // Page is full! Trigger Page Split.
-                self.split_and_insert_leaf(current_id, &mut path, key, payload)
+                self.split_and_insert_leaf(current_id, &mut path, key, payload)?;
+                Ok(false)
             }
         }
     }
@@ -105,13 +106,22 @@ impl BTree {
     ) -> io::Result<()> {
         let old_leaf = self.pager.read_page(leaf_id)?;
 
-        // 1. Collect all existing cells + the new cell in sorted order
+        // 1. Collect all existing cells + the new cell (updating if key exists)
         let count = old_leaf.cell_count() as usize;
         let mut all_cells: Vec<(i64, Vec<u8>)> = Vec::with_capacity(count + 1);
+        let mut found = false;
         for i in 0..count {
-            all_cells.push(old_leaf.get_leaf_cell(i));
+            let (k, p) = old_leaf.get_leaf_cell(i);
+            if k == new_key {
+                all_cells.push((new_key, new_payload.to_vec()));
+                found = true;
+            } else {
+                all_cells.push((k, p));
+            }
         }
-        all_cells.push((new_key, new_payload.to_vec()));
+        if !found {
+            all_cells.push((new_key, new_payload.to_vec()));
+        }
         all_cells.sort_by_key(|(k, _)| *k);
 
         let total = all_cells.len();
@@ -424,6 +434,39 @@ mod tests {
             // Boundary checks: empty range (no matches)
             let empty = btree.range_scan(200, 300).unwrap();
             assert!(empty.is_empty());
+        }
+
+        let _ = fs::remove_file(test_file);
+    }
+
+    #[test]
+    fn test_btree_primary_key_upsert() {
+        let test_file = "test_btree_upsert.db";
+        let _ = fs::remove_file(test_file);
+
+        {
+            let mut btree = BTree::open(test_file).unwrap();
+
+            // 1. Initial insert -> returns false (new record)
+            let updated = btree.insert(42, b"Alice").unwrap();
+            assert!(!updated);
+            assert_eq!(btree.search(42).unwrap(), Some(b"Alice".to_vec()));
+
+            // 2. In-place update with larger payload -> returns true (updated!)
+            let updated = btree.insert(42, b"Alice Wonder").unwrap();
+            assert!(updated);
+            assert_eq!(btree.search(42).unwrap(), Some(b"Alice Wonder".to_vec()));
+
+            // 3. In-place update with smaller payload -> returns true (updated!)
+            let updated = btree.insert(42, b"Al").unwrap();
+            assert!(updated);
+            assert_eq!(btree.search(42).unwrap(), Some(b"Al".to_vec()));
+
+            // 4. Verify no duplicate entries created
+            let scan = btree.range_scan(40, 50).unwrap();
+            assert_eq!(scan.len(), 1);
+            assert_eq!(scan[0].0, 42);
+            assert_eq!(scan[0].1, b"Al".to_vec());
         }
 
         let _ = fs::remove_file(test_file);
