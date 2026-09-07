@@ -1,0 +1,20 @@
+[package]
+name = "lithos-db"
+version = "0.1.0"
+edition = "2021"
+authors = ["Rusdan Lamsa <zxs1230017zazx@gmail.com>"]
+description = "A rock-solid on-disk B+Tree database engine in pure Rust."
+license = "MIT"
+
+[dependencies]
+# We keep external dependencies to zero for core storage engine!
+# Pure native standard library: std::fs, std::io, std::path
+
+[lib]
+name = "lithos"
+path = "src/lib.rs"
+
+[[bin]]
+name = "lithos"
+path = "src/main.rs"
+
