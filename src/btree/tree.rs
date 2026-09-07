@@ -471,4 +471,35 @@ mod tests {
 
         let _ = fs::remove_file(test_file);
     }
+
+    #[test]
+    fn test_wal_crash_recovery_without_flush() {
+        let test_file = "test_btree_crash.db";
+        let test_wal = "test_btree_crash.db.wal";
+        let _ = fs::remove_file(test_file);
+        let _ = fs::remove_file(test_wal);
+
+        // Step 1: Insert records into DB (written to WAL), simulate crash (drop without calling flush!)
+        {
+            let mut btree = BTree::open(test_file).unwrap();
+            btree.insert(1, b"Unflushed_Record_1").unwrap();
+            btree.insert(2, b"Unflushed_Record_2").unwrap();
+            btree.insert(3, b"Unflushed_Record_3").unwrap();
+            // Crucial: No btree.flush()! Drop struct directly.
+        }
+
+        // WAL file must contain uncheckpointed frames on disk
+        assert!(fs::metadata(test_wal).unwrap().len() > 0);
+
+        // Step 2: Reopen database. Startup recovery must automatically replay WAL frames!
+        {
+            let mut btree = BTree::open(test_file).unwrap();
+            assert_eq!(btree.search(1).unwrap(), Some(b"Unflushed_Record_1".to_vec()));
+            assert_eq!(btree.search(2).unwrap(), Some(b"Unflushed_Record_2".to_vec()));
+            assert_eq!(btree.search(3).unwrap(), Some(b"Unflushed_Record_3".to_vec()));
+        }
+
+        let _ = fs::remove_file(test_file);
+        let _ = fs::remove_file(test_wal);
+    }
 }
