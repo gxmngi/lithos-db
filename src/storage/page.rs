@@ -223,41 +223,78 @@ impl Page {
         (low as usize, false)
     }
 
-    /// Insert a (key, payload) cell into sorted order in the leaf page.
-    pub fn insert_leaf_cell(&mut self, key: i64, payload: &[u8]) -> Result<usize, String> {
-        let cell_size = 12 + payload.len();
-        if self.free_space() < cell_size + 2 {
+    /// Insert or update a (key, payload) cell into sorted order in the leaf page.
+    /// Returns (slot_index, was_updated: bool).
+    pub fn insert_or_update_leaf_cell(&mut self, key: i64, payload: &[u8]) -> Result<(usize, bool), String> {
+        let (slot, found) = self.find_leaf_cell(key);
+        let new_cell_size = 12 + payload.len();
+
+        if found {
+            // Primary Key exists: In-place update
+            let old_offset = self.get_cell_offset(slot) as usize;
+            let mut old_len_bytes = [0u8; 4];
+            old_len_bytes.copy_from_slice(&self.data[old_offset + 8..old_offset + 12]);
+            let old_len = u32::from_be_bytes(old_len_bytes) as usize;
+            let old_cell_size = 12 + old_len;
+
+            if new_cell_size <= old_cell_size {
+                // Overwrite in-place
+                self.data[old_offset + 8..old_offset + 12].copy_from_slice(&(payload.len() as u32).to_be_bytes());
+                self.data[old_offset + 12..old_offset + 12 + payload.len()].copy_from_slice(payload);
+                return Ok((slot, true));
+            } else {
+                // Allocate larger payload downwards from free space
+                if self.free_space() < new_cell_size {
+                    return Err(format!("Page overflow on update: required {} bytes", new_cell_size));
+                }
+                let new_content_offset = self.cell_content_offset() - new_cell_size as u16;
+                let offset = new_content_offset as usize;
+                self.data[offset..offset + 8].copy_from_slice(&key.to_be_bytes());
+                self.data[offset + 8..offset + 12].copy_from_slice(&(payload.len() as u32).to_be_bytes());
+                self.data[offset + 12..offset + new_cell_size].copy_from_slice(payload);
+                self.set_cell_content_offset(new_content_offset);
+
+                // Update slot pointer
+                self.set_cell_offset(slot, new_content_offset);
+                return Ok((slot, true));
+            }
+        }
+
+        // Primary Key does not exist: Standard sorted insert
+        if self.free_space() < new_cell_size + 2 {
             return Err(format!(
                 "Page overflow: required {} bytes, available {} bytes",
-                cell_size + 2,
+                new_cell_size + 2,
                 self.free_space()
             ));
         }
 
         // 1. Allocate payload downwards
-        let new_content_offset = self.cell_content_offset() - cell_size as u16;
+        let new_content_offset = self.cell_content_offset() - new_cell_size as u16;
         let offset = new_content_offset as usize;
 
         self.data[offset..offset + 8].copy_from_slice(&key.to_be_bytes());
         self.data[offset + 8..offset + 12].copy_from_slice(&(payload.len() as u32).to_be_bytes());
-        self.data[offset + 12..offset + cell_size].copy_from_slice(payload);
+        self.data[offset + 12..offset + new_cell_size].copy_from_slice(payload);
         self.set_cell_content_offset(new_content_offset);
 
-        // 2. Binary search for target slot
-        let (slot, _) = self.find_leaf_cell(key);
-
-        // 3. Shift existing pointers to the right
+        // 2. Shift existing pointers to the right
         let count = self.cell_count() as usize;
         for i in (slot..count).rev() {
             let prev_offset = self.get_cell_offset(i);
             self.set_cell_offset(i + 1, prev_offset);
         }
 
-        // 4. Insert pointer into target slot
+        // 3. Insert pointer into target slot
         self.set_cell_offset(slot, new_content_offset);
         self.set_cell_count((count + 1) as u16);
 
-        Ok(slot)
+        Ok((slot, false))
+    }
+
+    /// Insert a (key, payload) cell into sorted order in the leaf page.
+    pub fn insert_leaf_cell(&mut self, key: i64, payload: &[u8]) -> Result<usize, String> {
+        self.insert_or_update_leaf_cell(key, payload).map(|(slot, _)| slot)
     }
 
     // ----------------------------------------------------------------------

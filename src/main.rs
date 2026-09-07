@@ -76,8 +76,12 @@ fn main() -> io::Result<()> {
                 match parts[1].parse::<i64>() {
                     Ok(key) => {
                         let payload = parts[2..].join(" ");
-                        btree.insert(key, payload.as_bytes())?;
-                        println!("OK (inserted key {})", key);
+                        let updated = btree.insert(key, payload.as_bytes())?;
+                        if updated {
+                            println!("OK (updated existing key {})", key);
+                        } else {
+                            println!("OK (inserted new key {})", key);
+                        }
                     }
                     Err(_) => println!("Invalid integer key: {}", parts[1]),
                 }
