@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lithos-db"
+version = "0.1.0"
+description = "A rock-solid on-disk B+Tree database engine from scratch in pure Python."
+readme = "README.md"
+authors = [{ name = "Rusdan Lamsa", email = "zxs1230017zazx@gmail.com" }]
+license = { text = "MIT" }
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+lithos = "lithos.cli:main"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
