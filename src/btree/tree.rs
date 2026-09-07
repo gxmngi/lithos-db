@@ -263,6 +263,67 @@ impl BTree {
         Ok(results)
     }
 
+    /// Print a human-readable ASCII representation of the on-disk B+Tree structure.
+    pub fn print_tree(&mut self) -> io::Result<()> {
+        let root_id = self.root_page_id();
+        println!("=== LithosDB B+Tree Visualizer (Root Page {}) ===", root_id);
+        self.print_node(root_id, 0)?;
+        println!("==================================================");
+        Ok(())
+    }
+
+    fn print_node(&mut self, page_id: u32, depth: usize) -> io::Result<()> {
+        let indent = "  ".repeat(depth);
+        let page = self.pager.read_page(page_id)?;
+        let ptype = page.page_type().map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+
+        match ptype {
+            PageType::Interior => {
+                let count = page.cell_count() as usize;
+                println!(
+                    "{}├── [Interior Page {}] (cells: {}, right_child: Page {})",
+                    indent,
+                    page_id,
+                    count,
+                    page.right_child()
+                );
+
+                for i in 0..count {
+                    let (child_id, key) = page.get_interior_cell(i);
+                    println!("{}│   ├── Key <= {} -> Page {}", indent, key, child_id);
+                    self.print_node(child_id, depth + 2)?;
+                }
+
+                println!("{}│   └── Key > above -> Page {}", indent, page.right_child());
+                self.print_node(page.right_child(), depth + 2)?;
+            }
+            PageType::Leaf => {
+                let count = page.cell_count() as usize;
+                let keys: Vec<i64> = (0..count).map(|i| page.get_leaf_key(i)).collect();
+                let keys_display = if keys.len() > 10 {
+                    format!("{:?} ... ({} keys)", &keys[..10], keys.len())
+                } else {
+                    format!("{:?}", keys)
+                };
+
+                println!(
+                    "{}└── [Leaf Page {}] (cells: {}, free: {}B, next: {}, prev: {}) -> Keys: {}",
+                    indent,
+                    page_id,
+                    count,
+                    page.free_space(),
+                    page.next_leaf(),
+                    page.prev_leaf(),
+                    keys_display
+                );
+            }
+            PageType::Free => {
+                println!("{}[Free Page {}]", indent, page_id);
+            }
+        }
+        Ok(())
+    }
+
     /// Flush all pending writes to disk.
     pub fn flush(&mut self) -> io::Result<()> {
         self.pager.flush()
