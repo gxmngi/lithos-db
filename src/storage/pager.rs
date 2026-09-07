@@ -50,7 +50,10 @@ impl Pager {
                 .open(path)?;
 
             // Replay any uncheckpointed WAL frames from previous crash
-            let _recovered = wal.checkpoint(&mut file)?;
+            let recovered = wal.checkpoint(&mut file)?;
+            if recovered > 0 {
+                println!("[WAL Recovery] Detected dirty shutdown! Replayed {} page(s) from WAL safely.", recovered);
+            }
 
             let mut header_buf = [0u8; DB_HEADER_SIZE];
             file.seek(SeekFrom::Start(0))?;

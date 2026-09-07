@@ -39,17 +39,28 @@ fn main() -> io::Result<()> {
                 println!("Changes flushed to disk. Goodbye.");
                 break;
             }
+            ".crash" => {
+                println!("💥 SIMULATING POWER OUTAGE / KERNEL PANIC!");
+                println!("Process killed abruptly without flushing buffer pool or checkpointing WAL...");
+                std::process::exit(137);
+            }
+            ".checkpoint" => {
+                btree.flush()?;
+                println!("WAL Checkpoint completed. All frames merged into main database file.");
+            }
             ".btree" => {
                 btree.print_tree()?;
             }
             ".help" => {
                 println!("Commands:");
-                println!("  insert <key:i64> <text>      - Insert a record into B+Tree");
+                println!("  insert <key:i64> <text>      - Insert/Upsert a record into B+Tree");
                 println!("  select <key:i64>             - Search for a record in O(log N)");
                 println!("  scan <low:i64> <high:i64>    - Range scan records in O(log N + K)");
                 println!("  .populate <count:usize>      - Auto-insert N records to observe tree split");
                 println!("  .btree                       - Render ASCII B+Tree structure");
-                println!("  .exit                        - Flush and exit");
+                println!("  .checkpoint                  - Manually checkpoint WAL frames to disk");
+                println!("  .crash                       - Simulate instant power outage / crash");
+                println!("  .exit                        - Flush and exit gracefully");
             }
             ".populate" => {
                 if parts.len() < 2 {
