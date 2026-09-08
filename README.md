@@ -10,6 +10,10 @@
 
 > A rock-solid, embedded on-disk B+Tree database engine built from scratch in Rust with Slotted-Page architecture and WAL crash recovery.
 
+<p align="center">
+  <img src="assets/demo.gif" alt="LithosDB Hardware Latency Benchmark Demo" width="100%" />
+</p>
+
 A high-performance, embedded on-disk **B+Tree storage engine** written in native Rust. Designed from first principles following the classic database storage architecture popularized by SQLite, PostgreSQL, and WiredTiger.
 
 LithosDB implements **Slotted-Page binary serialization**, **dynamic 50/50 B+Tree node splitting**, **linked-leaf range scans**, **Write-Ahead Logging (WAL) with FNV-1a checksums**, and **automatic crash recovery**.
