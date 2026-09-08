@@ -1,9 +1,14 @@
-# LithosDB (`lithos-db`)
+# LithosDB
 
-[![Rust](https://img.shields.io/badge/rust-2021%20edition-orange.svg)](https://www.rust-lang.org/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)]()
-[![Tests](https://img.shields.io/badge/tests-9%20passed-success.svg)]()
+<p align="left">
+  <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Rust-2021_Edition-dea584?style=flat-square&logo=rust&logoColor=white" alt="Rust 2021" /></a>
+  <img src="https://img.shields.io/badge/Storage-On--Disk_B%2BTree-2496ED?style=flat-square" alt="On-Disk B+Tree" />
+  <img src="https://img.shields.io/badge/Architecture-Slotted--Page-blueviolet?style=flat-square" alt="Slotted-Page" />
+  <img src="https://img.shields.io/badge/Durability-WAL_%2F_ACID-success?style=flat-square" alt="WAL ACID" />
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-gray?style=flat-square" alt="License" /></a>
+</p>
+
+> A rock-solid, embedded on-disk B+Tree database engine built from scratch in Rust with Slotted-Page architecture and WAL crash recovery.
 
 A high-performance, embedded on-disk **B+Tree storage engine** written in native Rust. Designed from first principles following the classic database storage architecture popularized by SQLite, PostgreSQL, and WiredTiger.
 
@@ -237,4 +242,4 @@ LithosDB maintains an automated test suite verifying all low-level storage invar
 
 ## License
 
-MIT License. See [LICENSE](LICENSE) for details.
+Distributed under the [MIT License](LICENSE). Maintained by [Rusdan Lamsa (@gxmngi)](https://github.com/gxmngi).
