@@ -2,6 +2,7 @@
 
 <p align="left">
   <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Rust-2021_Edition-dea584?style=flat-square&logo=rust&logoColor=white" alt="Rust 2021" /></a>
+  <a href="https://github.com/gxmngi/lithos-db/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/gxmngi/lithos-db/ci.yml?branch=main&style=flat-square&logo=githubactions&logoColor=white" alt="CI" /></a>
   <img src="https://img.shields.io/badge/Storage-On--Disk_B%2BTree-2496ED?style=flat-square" alt="On-Disk B+Tree" />
   <img src="https://img.shields.io/badge/Architecture-Slotted--Page-blueviolet?style=flat-square" alt="Slotted-Page" />
   <img src="https://img.shields.io/badge/Durability-WAL_%2F_ACID-success?style=flat-square" alt="WAL ACID" />
