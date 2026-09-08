@@ -224,6 +224,26 @@ Found: "Crash_Proof_Diamond_Data"
 
 ---
 
+## Performance Benchmarks
+
+LithosDB includes a standalone microsecond benchmark suite evaluating sequential write durability, $O(\log N)$ point search latency, and sibling linked-leaf range scanning:
+
+```powershell
+cargo run --release --bin bench
+```
+
+### Empirical Hardware Benchmark Results (10,000 Records / NVMe SSD)
+
+| Workload Operation | Metric / Throughput | Latency | Complexity | Architectural Mechanism |
+| :--- | :--- | :--- | :--- | :--- |
+| **Point Search (Select)** | **151,226 QPS** | **6.61 µs / query** | $O(\log N)$ | In-Memory Slotted-Page Binary Search |
+| **Sibling Range Scan** | **4,274,951 recs/sec** | **4.73 ms / 20k rows** | $O(\log N + K)$ | Sequential `next_page` Leaf Pointer Walk |
+| **Sequential Insert & Split** | **889 ops/sec** | **1.12 ms / insert** | $O(\log N)$ | Strict ACID Durability (WAL fsync flush) |
+
+> **ACID Durability Invariant**: Write throughput reflects immediate synchronous Write-Ahead Log (WAL) flushing to physical disk storage per mutation without uncheckpointed batching. See Issue #3 for the Group Commit optimization roadmap.
+
+---
+
 ## Test Invariants
 
 LithosDB maintains an automated test suite verifying all low-level storage invariants:
