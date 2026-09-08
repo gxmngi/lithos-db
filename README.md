@@ -89,6 +89,12 @@ Every page is strictly **4096 bytes** (`0x1000` bytes). Variable-length cells ar
 +-----------------------------------------------------------------------+
 ```
 
+### Dynamic Defragmentation & Compaction
+When variable-length records are deleted (`Page::delete_leaf_cell`) or updated with varying payload sizes, non-contiguous fragmentation (dead space) accumulates in the payload region. LithosDB implements:
+* **`Page::total_free_space()`**: Computes total recoverable free bytes including internal fragmented holes.
+* **`Page::defragment()`**: Re-packs active cells tightly toward byte 4096, eliminates dead space gaps, and updates 2-byte slot pointers.
+* **Auto-Compaction**: Automatically defragments the page when contiguous free space is insufficient but total recoverable capacity can accommodate the incoming cell, preventing premature B+Tree page splits.
+
 ---
 
 ## 2. On-Disk B+Tree Indexing & Traversal

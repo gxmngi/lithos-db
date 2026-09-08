@@ -155,6 +155,119 @@ impl Page {
         }
     }
 
+    /// Calculate total recoverable free space, including fragmented dead space.
+    pub fn total_free_space(&self) -> usize {
+        let count = self.cell_count() as usize;
+        let pointers_size = 2 * count;
+        let ptype = self.page_type().unwrap_or(PageType::Leaf);
+
+        let mut active_payload_bytes = 0;
+        match ptype {
+            PageType::Leaf => {
+                for i in 0..count {
+                    let offset = self.get_cell_offset(i) as usize;
+                    let mut len_bytes = [0u8; 4];
+                    len_bytes.copy_from_slice(&self.data[offset + 8..offset + 12]);
+                    let payload_len = u32::from_be_bytes(len_bytes) as usize;
+                    active_payload_bytes += 12 + payload_len;
+                }
+            }
+            PageType::Interior => {
+                active_payload_bytes = count * 12;
+            }
+            PageType::Free => {
+                return PAGE_SIZE - HEADER_SIZE;
+            }
+        }
+
+        let used_bytes = HEADER_SIZE + pointers_size + active_payload_bytes;
+        if used_bytes <= PAGE_SIZE {
+            PAGE_SIZE - used_bytes
+        } else {
+            0
+        }
+    }
+
+    /// Consolidate all active cells toward byte 4096 and defragment free space.
+    pub fn defragment(&mut self) {
+        let count = self.cell_count() as usize;
+        if count == 0 {
+            self.set_cell_content_offset(PAGE_SIZE as u16);
+            return;
+        }
+
+        let ptype = self.page_type().unwrap_or(PageType::Leaf);
+
+        match ptype {
+            PageType::Leaf => {
+                let mut cells = Vec::with_capacity(count);
+                for i in 0..count {
+                    let (key, payload) = self.get_leaf_cell(i);
+                    cells.push((key, payload));
+                }
+
+                let mut new_offset = PAGE_SIZE as u16;
+                for (i, (key, payload)) in cells.into_iter().enumerate() {
+                    let cell_size = 12 + payload.len();
+                    new_offset -= cell_size as u16;
+                    let offset = new_offset as usize;
+
+                    self.data[offset..offset + 8].copy_from_slice(&key.to_be_bytes());
+                    self.data[offset + 8..offset + 12].copy_from_slice(&(payload.len() as u32).to_be_bytes());
+                    self.data[offset + 12..offset + cell_size].copy_from_slice(&payload);
+
+                    self.set_cell_offset(i, new_offset);
+                }
+                self.set_cell_content_offset(new_offset);
+            }
+            PageType::Interior => {
+                let mut cells = Vec::with_capacity(count);
+                for i in 0..count {
+                    let (child_id, key) = self.get_interior_cell(i);
+                    cells.push((child_id, key));
+                }
+
+                let mut new_offset = PAGE_SIZE as u16;
+                for (i, (child_id, key)) in cells.into_iter().enumerate() {
+                    let cell_size = 12;
+                    new_offset -= cell_size as u16;
+                    let offset = new_offset as usize;
+
+                    self.data[offset..offset + 4].copy_from_slice(&child_id.to_be_bytes());
+                    self.data[offset + 4..offset + 12].copy_from_slice(&key.to_be_bytes());
+
+                    self.set_cell_offset(i, new_offset);
+                }
+                self.set_cell_content_offset(new_offset);
+            }
+            PageType::Free => {}
+        }
+    }
+
+    /// Delete a cell by primary key from a leaf page.
+    /// Does not immediately compact storage; dead space is reclaimed on defragment().
+    pub fn delete_leaf_cell(&mut self, key: i64) -> Result<bool, String> {
+        let (slot, found) = self.find_leaf_cell(key);
+        if !found {
+            return Ok(false);
+        }
+
+        let count = self.cell_count() as usize;
+
+        // Shift pointers to the left to remove the slot
+        for i in slot..count - 1 {
+            let next_offset = self.get_cell_offset(i + 1);
+            self.set_cell_offset(i, next_offset);
+        }
+
+        // Clear the now unused pointer entry
+        let last_ptr_pos = HEADER_SIZE + ((count - 1) * 2);
+        self.data[last_ptr_pos..last_ptr_pos + 2].copy_from_slice(&[0, 0]);
+
+        self.set_cell_count((count - 1) as u16);
+        Ok(true)
+    }
+
     // ----------------------------------------------------------------------
     // Cell Pointer Array Operations
     // ----------------------------------------------------------------------
@@ -245,7 +358,11 @@ impl Page {
             } else {
                 // Allocate larger payload downwards from free space
                 if self.free_space() < new_cell_size {
-                    return Err(format!("Page overflow on update: required {} bytes", new_cell_size));
+                    if self.total_free_space() >= new_cell_size {
+                        self.defragment();
+                    } else {
+                        return Err(format!("Page overflow on update: required {} bytes", new_cell_size));
+                    }
                 }
                 let new_content_offset = self.cell_content_offset() - new_cell_size as u16;
                 let offset = new_content_offset as usize;
@@ -262,11 +379,15 @@ impl Page {
 
         // Primary Key does not exist: Standard sorted insert
         if self.free_space() < new_cell_size + 2 {
-            return Err(format!(
-                "Page overflow: required {} bytes, available {} bytes",
-                new_cell_size + 2,
-                self.free_space()
-            ));
+            if self.total_free_space() >= new_cell_size + 2 {
+                self.defragment();
+            } else {
+                return Err(format!(
+                    "Page overflow: required {} bytes, available {} bytes",
+                    new_cell_size + 2,
+                    self.free_space()
+                ));
+            }
         }
 
         // 1. Allocate payload downwards
@@ -415,6 +536,89 @@ mod tests {
         assert_eq!(page.find_interior_child(20), 2); // 20 <= 20 -> page 2
         assert_eq!(page.find_interior_child(35), 3); // 35 <= 50 -> page 3
         assert_eq!(page.find_interior_child(80), 4); // 80 > 50  -> right_child (page 4)
+    }
+
+    #[test]
+    fn test_leaf_deletion_and_fragmentation() {
+        let mut page = Page::new_leaf(true, 0, 0);
+        page.insert_leaf_cell(10, b"value_ten").unwrap();
+        page.insert_leaf_cell(20, b"value_twenty").unwrap();
+        page.insert_leaf_cell(30, b"value_thirty").unwrap();
+
+        assert_eq!(page.cell_count(), 3);
+        assert_eq!(page.free_space(), page.total_free_space());
+
+        let initial_total_free = page.total_free_space();
+
+        // Delete key 20
+        let deleted = page.delete_leaf_cell(20).unwrap();
+        assert!(deleted);
+        assert_eq!(page.cell_count(), 2);
+
+        // Key 20 no longer found, keys 10 and 30 intact
+        let (_, found) = page.find_leaf_cell(20);
+        assert!(!found);
+        assert_eq!(page.get_leaf_key(0), 10);
+        assert_eq!(page.get_leaf_key(1), 30);
+
+        // Deletion creates fragmentation: total_free_space > contiguous free_space
+        assert!(page.total_free_space() > page.free_space());
+        assert_eq!(page.total_free_space(), initial_total_free + 2 + 12 + 12); // 2B ptr + 12B cell header + 12B payload
+    }
+
+    #[test]
+    fn test_page_defragmentation_reclaims_dead_space() {
+        let mut page = Page::new_leaf(true, 0, 0);
+        page.insert_leaf_cell(1, b"first").unwrap();
+        page.insert_leaf_cell(2, b"second_payload_to_delete").unwrap();
+        page.insert_leaf_cell(3, b"third").unwrap();
+
+        page.delete_leaf_cell(2).unwrap();
+        assert!(page.total_free_space() > page.free_space());
+
+        // Defragment page
+        page.defragment();
+
+        // Contiguous free space should now equal total recoverable free space
+        assert_eq!(page.free_space(), page.total_free_space());
+        assert_eq!(page.cell_count(), 2);
+        assert_eq!(page.get_leaf_key(0), 1);
+        assert_eq!(page.get_leaf_key(1), 3);
+        assert_eq!(page.get_leaf_cell(0).1, b"first");
+        assert_eq!(page.get_leaf_cell(1).1, b"third");
+    }
+
+    #[test]
+    fn test_auto_defragmentation_on_overflow() {
+        let mut page = Page::new_leaf(true, 0, 0);
+
+        // Insert three 1000-byte payloads
+        let big_payload = vec![0xAA; 1000];
+        page.insert_leaf_cell(100, &big_payload).unwrap();
+        page.insert_leaf_cell(200, &big_payload).unwrap();
+        page.insert_leaf_cell(300, &big_payload).unwrap();
+
+        // Now page has ~1000 bytes free space left
+        assert!(page.free_space() < 1100);
+
+        // Delete key 200 (creates 1012 bytes of dead space)
+        page.delete_leaf_cell(200).unwrap();
+
+        // Contiguous free space is still < 1100, but total_free_space is ~2000 bytes
+        assert!(page.free_space() < 1100);
+        assert!(page.total_free_space() > 1900);
+
+        // Inserting a 1500-byte record would fail without defragmentation
+        // Auto-defragmentation triggers and allows the insert to succeed!
+        let new_big_payload = vec![0xBB; 1500];
+        let res = page.insert_leaf_cell(250, &new_big_payload);
+        assert!(res.is_ok(), "Insert should succeed via auto-defragmentation");
+
+        assert_eq!(page.cell_count(), 3);
+        assert_eq!(page.get_leaf_key(0), 100);
+        assert_eq!(page.get_leaf_key(1), 250);
+        assert_eq!(page.get_leaf_key(2), 300);
+        assert_eq!(page.get_leaf_cell(1).1.len(), 1500);
     }
 }
 
